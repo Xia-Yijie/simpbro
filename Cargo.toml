@@ -19,3 +19,6 @@ url = "2"
 
 # Error handling
 anyhow = "1"
+
+[dev-dependencies]
+ego-tree = "0.10"

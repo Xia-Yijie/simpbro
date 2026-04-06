@@ -1,7 +1,19 @@
+use std::sync::OnceLock;
+
 use anyhow::{Context, Result};
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
 use url::Url;
+
+fn title_selector() -> &'static Selector {
+    static SEL: OnceLock<Selector> = OnceLock::new();
+    SEL.get_or_init(|| Selector::parse("title").unwrap())
+}
+
+fn body_selector() -> &'static Selector {
+    static SEL: OnceLock<Selector> = OnceLock::new();
+    SEL.get_or_init(|| Selector::parse("body").unwrap())
+}
 
 /// A parsed link extracted from HTML
 #[derive(Clone, Debug)]
@@ -44,6 +56,24 @@ impl Browser {
     }
 
     pub fn fetch(&mut self, url_str: &str) -> Result<Page> {
+        let page = self.fetch_page(url_str)?;
+        if self.history.len() >= 100 {
+            self.history.remove(0);
+        }
+        self.history.push(page.url.clone());
+        Ok(page)
+    }
+
+    pub fn go_back(&mut self) -> Option<Result<Page>> {
+        if self.history.len() < 2 {
+            return None;
+        }
+        self.history.pop();
+        let prev = self.history.last()?.clone();
+        Some(self.fetch_page(&prev))
+    }
+
+    fn fetch_page(&self, url_str: &str) -> Result<Page> {
         let url = if url_str.starts_with("http://") || url_str.starts_with("https://") {
             url_str.to_string()
         } else {
@@ -59,20 +89,15 @@ impl Browser {
         let final_url = resp.url().to_string();
         let body = resp.text()?;
 
-        self.history.push(final_url.clone());
-
-        let page = self.parse_html(&body, &final_url)?;
-        Ok(page)
+        self.parse_html(&body, &final_url)
     }
 
     fn parse_html(&self, html: &str, base_url: &str) -> Result<Page> {
         let document = Html::parse_document(html);
         let base = Url::parse(base_url)?;
 
-        // Extract title
-        let title_sel = Selector::parse("title").unwrap();
         let title = document
-            .select(&title_sel)
+            .select(title_selector())
             .next()
             .map(|el| el.text().collect::<String>())
             .unwrap_or_default()
@@ -82,16 +107,14 @@ impl Browser {
         let mut lines: Vec<PageLine> = Vec::new();
         let mut links: Vec<Link> = Vec::new();
 
-        // Parse body content
-        let body_sel = Selector::parse("body").unwrap();
-        if let Some(body) = document.select(&body_sel).next() {
+        if let Some(body) = document.select(body_selector()).next() {
             self.walk_node(&body, &base, &mut lines, &mut links);
         }
 
-        // Remove leading/trailing blanks
-        while lines.first().is_some_and(|l| matches!(l, PageLine::Blank)) {
-            lines.remove(0);
-        }
+        lines.dedup_by(|a, b| matches!(a, PageLine::Blank) && matches!(b, PageLine::Blank));
+
+        let start = lines.iter().position(|l| !matches!(l, PageLine::Blank)).unwrap_or(lines.len());
+        lines.drain(..start);
         while lines.last().is_some_and(|l| matches!(l, PageLine::Blank)) {
             lines.pop();
         }
@@ -104,6 +127,10 @@ impl Browser {
         })
     }
 
+    fn collect_text(el: &scraper::ElementRef) -> String {
+        el.text().collect::<String>().trim().to_string()
+    }
+
     fn walk_node(
         &self,
         element: &scraper::ElementRef,
@@ -112,6 +139,11 @@ impl Browser {
         links: &mut Vec<Link>,
     ) {
         use scraper::Node;
+
+        const SKIP_TAGS: &[&str] = &[
+            "script", "style", "noscript", "meta", "link",
+            "head", "textarea", "svg", "iframe",
+        ];
 
         for child in element.children() {
             match child.value() {
@@ -124,8 +156,7 @@ impl Browser {
                 Node::Element(el) => {
                     let tag = el.name();
 
-                    // Skip non-visible elements
-                    if matches!(tag, "script" | "style" | "noscript" | "meta" | "link" | "head") {
+                    if SKIP_TAGS.contains(&tag) {
                         continue;
                     }
 
@@ -134,7 +165,7 @@ impl Browser {
                         match tag {
                             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                                 let level = tag[1..].parse::<u8>().unwrap_or(1);
-                                let text: String = child_el.text().collect::<String>().trim().to_string();
+                                let text: String = Self::collect_text(&child_el);
                                 if !text.is_empty() {
                                     lines.push(PageLine::Blank);
                                     lines.push(PageLine::Heading(text, level));
@@ -142,7 +173,7 @@ impl Browser {
                                 }
                             }
                             "a" => {
-                                let text: String = child_el.text().collect::<String>().trim().to_string();
+                                let text: String = Self::collect_text(&child_el);
                                 let href = el.attr("href").unwrap_or("");
                                 if !text.is_empty() && !href.is_empty() {
                                     let resolved = base.join(href).map(|u| u.to_string()).unwrap_or(href.to_string());
@@ -163,7 +194,7 @@ impl Browser {
                                 lines.push(PageLine::Blank);
                             }
                             "li" => {
-                                let text: String = child_el.text().collect::<String>().trim().to_string();
+                                let text: String = Self::collect_text(&child_el);
                                 if !text.is_empty() {
                                     lines.push(PageLine::Text(format!("  • {}", text)));
                                 }

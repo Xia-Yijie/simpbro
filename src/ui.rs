@@ -45,7 +45,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     // Set cursor position in URL input mode
     if matches!(app.input_mode, InputMode::UrlInput) {
         f.set_cursor_position((
-            chunks[0].x + app.input.len() as u16 + 1,
+            chunks[0].x + app.input.chars().count() as u16 + 1,
             chunks[0].y + 1,
         ));
     }

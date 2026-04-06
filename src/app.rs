@@ -33,7 +33,12 @@ impl App {
 
     pub fn navigate(&mut self, url: &str) {
         self.status_msg = format!("Loading {}...", url);
-        match self.browser.fetch(url) {
+        let result = self.browser.fetch(url);
+        self.apply_page(result);
+    }
+
+    fn apply_page(&mut self, result: Result<Page>) {
+        match result {
             Ok(page) => {
                 self.status_msg = format!("Loaded: {}", page.title);
                 self.scroll_offset = 0;
@@ -91,11 +96,9 @@ impl App {
     }
 
     pub fn go_back(&mut self) {
-        if self.browser.history.len() >= 2 {
-            self.browser.history.pop(); // current
-            if let Some(prev) = self.browser.history.pop() {
-                self.navigate(&prev);
-            }
+        let result = self.browser.go_back();
+        if let Some(result) = result {
+            self.apply_page(result);
         } else {
             self.status_msg = "No history to go back to".into();
         }
