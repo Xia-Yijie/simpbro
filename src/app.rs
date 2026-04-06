@@ -1,0 +1,116 @@
+use crate::browser::{Browser, Page, PageLine};
+use anyhow::Result;
+
+pub enum InputMode {
+    Normal,
+    UrlInput,
+}
+
+pub struct App {
+    pub browser: Browser,
+    pub current_page: Option<Page>,
+    pub scroll_offset: usize,
+    pub selected_link: Option<usize>,
+    pub input: String,
+    pub input_mode: InputMode,
+    pub status_msg: String,
+    pub should_quit: bool,
+}
+
+impl App {
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            browser: Browser::new()?,
+            current_page: None,
+            scroll_offset: 0,
+            selected_link: None,
+            input: String::new(),
+            input_mode: InputMode::Normal,
+            status_msg: "Press 'g' to enter URL, 'q' to quit".into(),
+            should_quit: false,
+        })
+    }
+
+    pub fn navigate(&mut self, url: &str) {
+        self.status_msg = format!("Loading {}...", url);
+        match self.browser.fetch(url) {
+            Ok(page) => {
+                self.status_msg = format!("Loaded: {}", page.title);
+                self.scroll_offset = 0;
+                self.selected_link = if page.links.is_empty() { None } else { Some(0) };
+                self.current_page = Some(page);
+            }
+            Err(e) => {
+                self.status_msg = format!("Error: {}", e);
+            }
+        }
+    }
+
+    pub fn scroll_down(&mut self, amount: usize) {
+        if let Some(page) = &self.current_page {
+            let max = page.lines.len().saturating_sub(1);
+            self.scroll_offset = (self.scroll_offset + amount).min(max);
+        }
+    }
+
+    pub fn scroll_up(&mut self, amount: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(amount);
+    }
+
+    pub fn next_link(&mut self) {
+        if let Some(page) = &self.current_page {
+            if page.links.is_empty() {
+                return;
+            }
+            self.selected_link = Some(match self.selected_link {
+                Some(i) => (i + 1) % page.links.len(),
+                None => 0,
+            });
+        }
+    }
+
+    pub fn prev_link(&mut self) {
+        if let Some(page) = &self.current_page {
+            if page.links.is_empty() {
+                return;
+            }
+            self.selected_link = Some(match self.selected_link {
+                Some(0) | None => page.links.len().saturating_sub(1),
+                Some(i) => i - 1,
+            });
+        }
+    }
+
+    pub fn follow_selected_link(&mut self) {
+        if let (Some(page), Some(idx)) = (&self.current_page, self.selected_link) {
+            if let Some(link) = page.links.get(idx) {
+                let url = link.url.clone();
+                self.navigate(&url);
+            }
+        }
+    }
+
+    pub fn go_back(&mut self) {
+        if self.browser.history.len() >= 2 {
+            self.browser.history.pop(); // current
+            if let Some(prev) = self.browser.history.pop() {
+                self.navigate(&prev);
+            }
+        } else {
+            self.status_msg = "No history to go back to".into();
+        }
+    }
+
+    /// Get visible lines for rendering
+    pub fn visible_lines(&self, height: usize) -> Vec<&PageLine> {
+        match &self.current_page {
+            Some(page) => page
+                .lines
+                .iter()
+                .skip(self.scroll_offset)
+                .take(height)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+}

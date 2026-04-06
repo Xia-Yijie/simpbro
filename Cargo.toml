@@ -1,0 +1,21 @@
+[package]
+name = "simpbro"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# TUI framework
+ratatui = "0.29"
+crossterm = "0.28"
+
+# HTML parsing
+scraper = "0.22"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["blocking", "cookies"] }
+
+# URL handling
+url = "2"
+
+# Error handling
+anyhow = "1"
