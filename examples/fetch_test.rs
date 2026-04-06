@@ -3,8 +3,9 @@ use simpbro::browser::Browser;
 fn main() {
     let mut browser = Browser::new().expect("Failed to create browser");
 
-    println!("=== Fetching example.com ===\n");
-    match browser.fetch("https://example.com") {
+    let url = std::env::args().nth(1).unwrap_or_else(|| "https://example.com".to_string());
+    println!("=== Fetching {} ===\n", url);
+    match browser.fetch(&url) {
         Ok(page) => {
             println!("URL:   {}", page.url);
             println!("Title: {}", page.title);

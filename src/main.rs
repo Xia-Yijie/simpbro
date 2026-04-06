@@ -1,5 +1,7 @@
 mod app;
 mod browser;
+mod dom;
+mod js_engine;
 mod ui;
 
 use anyhow::Result;
