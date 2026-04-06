@@ -331,4 +331,18 @@ impl JsEngine {
     pub fn logs(&self) -> Vec<String> {
         self.logs.borrow().clone()
     }
+
+    /// Check if JS changed window.location.href (e.g. via location.replace)
+    pub fn redirected_url(&self) -> Option<String> {
+        self.context.with(|ctx| -> Option<String> {
+            let globals = ctx.globals();
+            let original: String = globals.get("__page_url").ok()?;
+            let current: String = ctx.eval::<String, _>("window.location.href").ok()?;
+            if current != original && !current.is_empty() {
+                Some(current)
+            } else {
+                None
+            }
+        })
+    }
 }

@@ -88,6 +88,11 @@ impl Browser {
 
         let js_engine = JsEngine::new(dom, base_url, &self.client)?;
         js_engine.execute_scripts()?;
+
+        if let Some(redirect_url) = js_engine.redirected_url() {
+            return self.fetch_page(&redirect_url);
+        }
+
         let js_logs = js_engine.logs();
         let dom = js_engine.dom();
 
@@ -158,6 +163,10 @@ impl Browser {
                             links.push(Link { text: text.clone(), url: resolved });
                             lines.push(PageLine::LinkRef(text, idx));
                         }
+                    }
+                    "img" => {
+                        let alt = node.attributes.get("alt").map(|s| s.as_str()).unwrap_or("image");
+                        lines.push(PageLine::Text(format!("[img: {}]", alt)));
                     }
                     "br" => {
                         lines.push(PageLine::Blank);
