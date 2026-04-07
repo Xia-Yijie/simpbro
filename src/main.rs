@@ -46,7 +46,7 @@ fn main() -> Result<()> {
                     KeyCode::Char('g') => {
                         app.input_mode = InputMode::UrlInput;
                         app.input.clear();
-                        app.status_msg = "Enter URL (Esc to cancel)".into();
+                        app.status_msg = "输入网址 (Esc 取消)".into();
                     }
                     KeyCode::Char('j') | KeyCode::Down => app.scroll_down(1),
                     KeyCode::Char('k') | KeyCode::Up => app.scroll_up(1),
@@ -68,7 +68,7 @@ fn main() -> Result<()> {
                     }
                     KeyCode::Esc => {
                         app.input_mode = InputMode::Normal;
-                        app.status_msg = "Press 'g' to enter URL, 'q' to quit".into();
+                        app.status_msg = "按 g 输入网址 | q 退出".into();
                     }
                     KeyCode::Char(c) => {
                         app.input.push(c);

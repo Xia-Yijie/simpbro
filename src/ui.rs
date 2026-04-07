@@ -58,20 +58,20 @@ pub fn draw(f: &mut Frame, app: &App) {
         vec![
             Line::from(""),
             Line::from(Span::styled(
-                "  Welcome to simpbro!",
+                "  simpbro - 终端浏览器",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
-            Line::from("  Press 'g' to enter a URL"),
-            Line::from("  Press 'q' to quit"),
+            Line::from("  按 g 输入网址"),
+            Line::from("  按 q 退出"),
             Line::from(""),
-            Line::from("  Navigation:"),
-            Line::from("    j/k or ↑/↓  - scroll"),
-            Line::from("    Tab/Shift+Tab - cycle links"),
-            Line::from("    Enter        - follow link"),
-            Line::from("    b            - go back"),
+            Line::from("  导航:"),
+            Line::from("    j/k 或 ↑/↓    滚动"),
+            Line::from("    Tab/Shift+Tab  切换链接"),
+            Line::from("    Enter          打开链接"),
+            Line::from("    b              后退"),
         ]
     } else {
         visible

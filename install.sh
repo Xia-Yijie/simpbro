@@ -30,6 +30,10 @@ echo "Installing simpbro $TAG (${OS}/${ARCH})..."
 mkdir -p "$INSTALL_DIR"
 curl -sL "$URL" -o "$INSTALL_DIR/simpbro"
 chmod +x "$INSTALL_DIR/simpbro"
+# macOS: clear quarantine/provenance attributes that block execution
+if [ "$OS" = "darwin" ]; then
+    xattr -c "$INSTALL_DIR/simpbro" 2>/dev/null || true
+fi
 
 echo "Installed to $INSTALL_DIR/simpbro"
 

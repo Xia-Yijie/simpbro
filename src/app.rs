@@ -26,13 +26,13 @@ impl App {
             selected_link: None,
             input: String::new(),
             input_mode: InputMode::Normal,
-            status_msg: "Press 'g' to enter URL, 'q' to quit".into(),
+            status_msg: "按 g 输入网址 | q 退出".into(),
             should_quit: false,
         })
     }
 
     pub fn navigate(&mut self, url: &str) {
-        self.status_msg = format!("Loading {}...", url);
+        self.status_msg = format!("加载中 {}...", url);
         let result = self.browser.fetch(url);
         self.apply_page(result);
     }
@@ -40,13 +40,13 @@ impl App {
     fn apply_page(&mut self, result: Result<Page>) {
         match result {
             Ok(page) => {
-                self.status_msg = format!("Loaded: {}", page.title);
+                self.status_msg = format!("已加载: {}", page.title);
                 self.scroll_offset = 0;
                 self.selected_link = if page.links.is_empty() { None } else { Some(0) };
                 self.current_page = Some(page);
             }
             Err(e) => {
-                self.status_msg = format!("Error: {}", e);
+                self.status_msg = format!("错误: {}", e);
             }
         }
     }
@@ -100,7 +100,7 @@ impl App {
         if let Some(result) = result {
             self.apply_page(result);
         } else {
-            self.status_msg = "No history to go back to".into();
+            self.status_msg = "没有历史记录".into();
         }
     }
 

@@ -165,8 +165,8 @@ impl Browser {
                         }
                     }
                     "img" => {
-                        let alt = node.attributes.get("alt").map(|s| s.as_str()).unwrap_or("image");
-                        lines.push(PageLine::Text(format!("[img: {}]", alt)));
+                        let alt = node.attributes.get("alt").map(|s| s.as_str()).unwrap_or("图片");
+                        lines.push(PageLine::Text(format!("[图: {}]", alt)));
                     }
                     "br" => {
                         lines.push(PageLine::Blank);

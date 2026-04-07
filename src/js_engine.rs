@@ -267,36 +267,70 @@ impl JsEngine {
         Ok(Self { runtime, context, dom, timers, logs, client: http_client })
     }
 
+    fn resolve_script_url(page_url: &str, src_url: &str) -> Option<String> {
+        if src_url.starts_with("//") {
+            return Some(format!("https:{}", src_url));
+        }
+        if src_url.starts_with("http://") || src_url.starts_with("https://") {
+            return Some(src_url.to_string());
+        }
+        url::Url::parse(page_url).ok()
+            .and_then(|base| base.join(src_url).ok())
+            .map(|u| u.to_string())
+    }
+
     pub fn execute_scripts(&self) -> Result<()> {
         let scripts = self.dom.borrow().extract_scripts();
         let page_url = self.context.with(|ctx| -> Result<String> {
             Ok(ctx.globals().get::<_, String>("__page_url")?)
         })?;
 
-        for (src, inline) in scripts {
-            let code = if let Some(src_url) = src {
-                let full_url = if src_url.starts_with("//") {
-                    format!("https:{}", src_url)
-                } else if src_url.starts_with("http://") || src_url.starts_with("https://") {
-                    src_url
-                } else if src_url.starts_with('/') {
-                    if let Ok(base) = url::Url::parse(&page_url) {
-                        format!("{}://{}{}", base.scheme(), base.host_str().unwrap_or(""), src_url)
-                    } else {
-                        continue;
-                    }
-                } else {
-                    continue;
-                };
+        const MAX_SCRIPTS: usize = 20;
+        let scripts: Vec<_> = scripts.into_iter().take(MAX_SCRIPTS).collect();
 
-                match self.client.get(&full_url).send()
-                    .and_then(|r| r.text())
-                {
-                    Ok(code) => code,
-                    Err(_) => continue,
+        let mut to_fetch: Vec<(usize, String)> = Vec::new();
+        for (i, (src, _)) in scripts.iter().enumerate() {
+            if let Some(src_url) = src {
+                if let Some(full_url) = Self::resolve_script_url(&page_url, src_url) {
+                    to_fetch.push((i, full_url));
+                }
+            }
+        }
+
+        let fetch_client = reqwest::blocking::Client::builder()
+            .user_agent("simpbro/0.1")
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| self.client.clone());
+
+        let fetched: Vec<(usize, Option<String>)> = std::thread::scope(|s| {
+            let handles: Vec<_> = to_fetch.iter().map(|(i, url)| {
+                let client = &fetch_client;
+                let url = url.clone();
+                let idx = *i;
+                s.spawn(move || {
+                    let code = client.get(&url).send()
+                        .and_then(|r| r.text())
+                        .ok();
+                    (idx, code)
+                })
+            }).collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        let mut fetched_map: std::collections::HashMap<usize, String> = fetched
+            .into_iter()
+            .filter_map(|(i, code)| code.map(|c| (i, c)))
+            .collect();
+
+        for (i, (src, inline)) in scripts.iter().enumerate() {
+            let code = if src.is_some() {
+                match fetched_map.remove(&i) {
+                    Some(code) => code,
+                    None => continue,
                 }
             } else if let Some(code) = inline {
-                code
+                code.clone()
             } else {
                 continue;
             };
