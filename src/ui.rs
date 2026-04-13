@@ -35,7 +35,7 @@ pub fn draw(f: &mut Frame, app: &mut App) -> DrawResult {
         .constraints([
             Constraint::Length(3),
             Constraint::Min(1),
-            Constraint::Length(1),
+            Constraint::Length(3),
         ])
         .split(f.area());
 
@@ -50,7 +50,7 @@ pub fn draw(f: &mut Frame, app: &mut App) -> DrawResult {
     };
     let url_bar = Paragraph::new(url_text)
         .style(url_style)
-        .block(Block::default().borders(Borders::ALL).title(" simpbro "));
+        .block(Block::default().borders(Borders::ALL).title(" 地址栏 "));
     f.render_widget(url_bar, chunks[0]);
     if matches!(app.input_mode, InputMode::UrlInput) {
         f.set_cursor_position((
@@ -95,13 +95,9 @@ pub fn draw(f: &mut Frame, app: &mut App) -> DrawResult {
     f.render_widget(content, inner);
 
     // ---- Status bar ----
-    let status = Paragraph::new(Line::from(vec![
-        Span::styled(
-            &app.status_msg,
-            Style::default().fg(Color::White).bg(Color::DarkGray),
-        ),
-    ]))
-    .style(Style::default().bg(Color::DarkGray));
+    let status = Paragraph::new(app.status_msg.as_str())
+        .style(Style::default().fg(Color::White))
+        .block(Block::default().borders(Borders::ALL).title(" 状态栏 "));
     f.render_widget(status, chunks[2]);
 
     DrawResult { content_area: inner, viewport }

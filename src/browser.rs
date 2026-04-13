@@ -217,13 +217,6 @@ impl Page {
             None
         }
     }
-
-    /// Submit the form containing the given input. Returns Some(url) if default proceeds.
-    pub fn submit_form(&mut self, input_idx: usize) -> Option<String> {
-        let form_idx = self.inputs.get(input_idx)?.form_id?;
-        self.submit_form_by_idx(form_idx)
-    }
-
 }
 
 #[derive(Default)]

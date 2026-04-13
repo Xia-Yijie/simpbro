@@ -36,7 +36,7 @@ impl App {
             viewport_height: None,
             input: String::new(),
             input_mode: InputMode::Normal,
-            status_msg: "按 g 输入网址 | q 退出".into(),
+            status_msg: "按 g 输入网址 | Ctrl+C 退出".into(),
             should_quit: false,
             mouse: MouseState::default(),
         })
@@ -151,20 +151,6 @@ impl App {
             self.status_msg = format!("已输入: {}", value);
             self.input_mode = InputMode::Normal;
         }
-    }
-
-    pub fn submit_form(&mut self) {
-        let input_idx = self.focused
-            .and_then(|f| self.current_page.as_ref()?.focus_order.get(f))
-            .and_then(|fi| match fi.kind { FocusKind::Input(i) => Some(i), _ => None });
-        if let Some(idx) = input_idx {
-            let url_opt = self.current_page.as_mut().and_then(|p| p.submit_form(idx));
-            if let Some(url) = url_opt {
-                self.navigate(&url);
-                return;
-            }
-        }
-        self.status_msg = "当前焦点不是输入框或没有关联表单".into();
     }
 
     pub fn scroll_down(&mut self, amount: usize) {

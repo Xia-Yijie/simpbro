@@ -10,7 +10,7 @@ mod viewport;
 use anyhow::Result;
 use app::{App, InputMode};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -78,23 +78,27 @@ fn main() -> Result<()> {
         if let Event::Key(key) = ev {
             if key.kind != KeyEventKind::Press { continue; }
 
+            // Global: Ctrl+C exits, Ctrl+Z goes back.
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                match key.code {
+                    KeyCode::Char('c') => { app.should_quit = true; break; }
+                    KeyCode::Char('z') => { app.go_back(); continue; }
+                    _ => {}
+                }
+            }
+
             match app.input_mode {
                 InputMode::Normal => match key.code {
-                    KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('g') => {
                         app.input_mode = InputMode::UrlInput;
                         app.input.clear();
                         app.status_msg = "输入网址 (Esc 取消)".into();
                     }
-                    KeyCode::Char('s') => app.submit_form(),
-                    KeyCode::Char('j') | KeyCode::Down => app.scroll_down(1),
-                    KeyCode::Char('k') | KeyCode::Up => app.scroll_up(1),
-                    KeyCode::Char('d') => app.scroll_down(10),
-                    KeyCode::Char('u') => app.scroll_up(10),
+                    KeyCode::Down => app.scroll_down(1),
+                    KeyCode::Up => app.scroll_up(1),
                     KeyCode::Tab => app.focus_next(),
                     KeyCode::BackTab => app.focus_prev(),
                     KeyCode::Enter => app.activate_focused(),
-                    KeyCode::Char('b') => app.go_back(),
                     _ => {}
                 },
                 InputMode::UrlInput => match key.code {
@@ -105,7 +109,7 @@ fn main() -> Result<()> {
                     }
                     KeyCode::Esc => {
                         app.input_mode = InputMode::Normal;
-                        app.status_msg = "按 g 输入网址 | q 退出".into();
+                        app.status_msg = "按 g 输入网址 | Ctrl+C 退出".into();
                     }
                     KeyCode::Char(c) => app.input.push(c),
                     KeyCode::Backspace => { app.input.pop(); }
@@ -115,7 +119,7 @@ fn main() -> Result<()> {
                     KeyCode::Enter => app.confirm_form_input(),
                     KeyCode::Esc => {
                         app.input_mode = InputMode::Normal;
-                        app.status_msg = "按 g 输入网址 | q 退出".into();
+                        app.status_msg = "按 g 输入网址 | Ctrl+C 退出".into();
                     }
                     KeyCode::Char(c) => app.input.push(c),
                     KeyCode::Backspace => { app.input.pop(); }
