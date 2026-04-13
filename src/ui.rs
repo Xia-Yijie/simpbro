@@ -1,6 +1,7 @@
 use crate::app::{App, InputMode};
 use crate::browser::{FocusKind, TextStyle};
 use crate::viewport::{Cell, Viewport};
+use unicode_width::UnicodeWidthStr;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -27,62 +28,125 @@ fn apply_text_style(base: Style, ts: &TextStyle) -> Style {
 pub struct DrawResult {
     pub content_area: Rect,
     pub viewport: Viewport,
+    pub tab_bar_area: Rect,
+    pub url_bar_area: Rect,
+    pub back_region: Option<(u16, u16)>,
+    pub refresh_region: Option<(u16, u16)>,
+    pub tab_regions: Vec<(u16, u16)>,
 }
 
 pub fn draw(f: &mut Frame, app: &mut App) -> DrawResult {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(3),
+            Constraint::Length(3), // tab bar
+            Constraint::Length(3), // URL bar
+            Constraint::Min(1),    // content
+            Constraint::Length(3), // status
         ])
         .split(f.area());
+
+    // ---- Tab bar ----
+    let mut tab_spans: Vec<Span> = Vec::new();
+    let mut tab_regions: Vec<(u16, u16)> = Vec::new();
+    let inner_x_start: u16 = chunks[0].x + 1;
+    let mut col: u16 = 0;
+
+    // Back / refresh buttons at the start
+    let back_label = " [回退] ";
+    let refresh_label = " [刷新] ";
+    let back_w = back_label.width() as u16;
+    let refresh_w = refresh_label.width() as u16;
+
+    let btn_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let back_start = inner_x_start + col;
+    tab_spans.push(Span::styled(back_label, btn_style));
+    let back_region = Some((back_start, back_start + back_w.saturating_sub(1)));
+    col += back_w;
+
+    let refresh_start = inner_x_start + col;
+    tab_spans.push(Span::styled(refresh_label, btn_style));
+    let refresh_region = Some((refresh_start, refresh_start + refresh_w.saturating_sub(1)));
+    col += refresh_w;
+
+    tab_spans.push(Span::raw("  "));
+    col += 2;
+
+    for (i, t) in app.tabs.iter().enumerate() {
+        let mut title = t.title();
+        if title.chars().count() > 16 {
+            title = format!("{}…", title.chars().take(15).collect::<String>());
+        }
+        let label = format!(" {}: {} ", i + 1, title);
+        let label_cols = label.as_str().width() as u16;
+        let style = if i == app.active_tab {
+            Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        let start = inner_x_start + col;
+        let end = start + label_cols.saturating_sub(1);
+        tab_regions.push((start, end));
+        tab_spans.push(Span::styled(label, style));
+        tab_spans.push(Span::raw("  "));
+        col += label_cols + 2;
+    }
+    let tab_border = if matches!(app.input_mode, InputMode::TabNav) {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let tab_bar = Paragraph::new(Line::from(tab_spans))
+        .block(Block::default().borders(Borders::ALL).border_style(tab_border).title(" 操作栏 "));
+    f.render_widget(tab_bar, chunks[0]);
 
     // ---- URL bar ----
     let url_text = match &app.input_mode {
         InputMode::UrlInput => app.input.as_str(),
-        _ => app.current_page.as_ref().map(|p| p.url.as_str()).unwrap_or(""),
+        _ => app.current_page().map(|p| p.url.as_str()).unwrap_or(""),
     };
     let url_style = match app.input_mode {
         InputMode::UrlInput => Style::default().fg(Color::Yellow),
         _ => Style::default().fg(Color::Cyan),
     };
+    let url_border = if matches!(app.input_mode, InputMode::UrlInput) {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
     let url_bar = Paragraph::new(url_text)
         .style(url_style)
-        .block(Block::default().borders(Borders::ALL).title(" 地址栏 "));
-    f.render_widget(url_bar, chunks[0]);
+        .block(Block::default().borders(Borders::ALL).border_style(url_border).title(" 地址栏 "));
+    f.render_widget(url_bar, chunks[1]);
     if matches!(app.input_mode, InputMode::UrlInput) {
         f.set_cursor_position((
-            chunks[0].x + app.input.chars().count() as u16 + 1,
-            chunks[0].y + 1,
+            chunks[1].x + app.input.chars().count() as u16 + 1,
+            chunks[1].y + 1,
         ));
     }
 
-    // ---- Content: border box + inner grid ----
-    let outer = chunks[1];
+    // ---- Content ----
+    let outer = chunks[2];
     let block = Block::default().borders(Borders::LEFT | Borders::RIGHT);
     let inner = block.inner(outer);
     f.render_widget(block, outer);
 
     app.viewport_height = Some(inner.height as usize);
 
-    // Build viewport grid from page model.
     let input_override = match app.input_mode {
         InputMode::FormInput(idx) => Some((idx, app.input.as_str())),
         _ => None,
     };
     let viewport = Viewport::build(
-        app.current_page.as_ref(),
-        app.scroll_offset,
+        app.current_page(),
+        app.tab().scroll_offset,
         inner.width,
         inner.height,
         input_override,
     );
 
-    // Focus info for highlight
-    let focused_kind: Option<FocusKind> = app.focused
-        .and_then(|f| app.current_page.as_ref()?.focus_order.get(f).map(|fi| fi.kind));
+    let focused_kind: Option<FocusKind> = app.tab().focused
+        .and_then(|f| app.current_page()?.focus_order.get(f).map(|fi| fi.kind));
 
     // Selection info (in content-local coords)
     let selection = app.mouse.selection();
@@ -98,9 +162,17 @@ pub fn draw(f: &mut Frame, app: &mut App) -> DrawResult {
     let status = Paragraph::new(app.status_msg.as_str())
         .style(Style::default().fg(Color::White))
         .block(Block::default().borders(Borders::ALL).title(" 状态栏 "));
-    f.render_widget(status, chunks[2]);
+    f.render_widget(status, chunks[3]);
 
-    DrawResult { content_area: inner, viewport }
+    DrawResult {
+        content_area: inner,
+        viewport,
+        tab_bar_area: chunks[0],
+        url_bar_area: chunks[1],
+        back_region,
+        refresh_region,
+        tab_regions,
+    }
 }
 
 fn row_to_line(

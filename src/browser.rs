@@ -524,7 +524,6 @@ fn walk_dom_node(
 
 pub struct Browser {
     client: Client,
-    pub history: Vec<String>,
 }
 
 impl Browser {
@@ -532,31 +531,28 @@ impl Browser {
         let client = Client::builder()
             .user_agent("simpbro/0.1")
             .build()?;
-        Ok(Self { client, history: Vec::new() })
+        Ok(Self { client })
     }
 
-    pub fn fetch(&mut self, url_str: &str) -> Result<Page> {
-        let page = self.fetch_page(url_str)?;
-        if self.history.len() >= 100 {
-            self.history.remove(0);
+    pub fn fetch(&self, url_str: &str) -> Result<Page> {
+        if let Some(path) = url_str.strip_prefix("simpbro://") {
+            return self.load_internal(path);
         }
-        self.history.push(page.url.clone());
-        Ok(page)
+        self.fetch_page(url_str)
     }
 
     /// Build a Page from an HTML string without making a network request.
-    /// Used for the embedded welcome page.
     pub fn load_embedded(&self, html: &str, url: &str) -> Result<Page> {
         self.build_page(html, url)
     }
 
-    pub fn go_back(&mut self) -> Option<Result<Page>> {
-        if self.history.len() < 2 {
-            return None;
-        }
-        self.history.pop();
-        let prev = self.history.last()?.clone();
-        Some(self.fetch_page(&prev))
+    /// Serve an internal `simpbro://<path>` page from baked-in assets.
+    fn load_internal(&self, path: &str) -> Result<Page> {
+        let html = match path.trim_end_matches('/') {
+            "about" | "" => include_str!("welcome.html"),
+            other => anyhow::bail!("unknown internal page: simpbro://{}", other),
+        };
+        self.load_embedded(html, &format!("simpbro://{}", path))
     }
 
     fn fetch_page(&self, url_str: &str) -> Result<Page> {

@@ -19,6 +19,8 @@ pub enum MouseAction {
     ActivateAt(usize),
     /// Selection released with text → send to clipboard.
     Copy(String),
+    /// Click on a tab label → switch to that tab.
+    SwitchTab(usize),
 }
 
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
@@ -50,6 +52,8 @@ impl MouseState {
         &mut self,
         ev: &MouseEvent,
         content_area: Rect,
+        tab_bar_area: Rect,
+        tab_regions: &[(u16, u16)],
         viewport: &Viewport,
         page: Option<&Page>,
     ) -> MouseAction {
@@ -57,6 +61,18 @@ impl MouseState {
             MouseEventKind::ScrollUp => return MouseAction::ScrollUp(3),
             MouseEventKind::ScrollDown => return MouseAction::ScrollDown(3),
             _ => {}
+        }
+
+        // Tab bar: left-click on a tab label switches tabs.
+        if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left))
+            && in_rect(tab_bar_area, ev.column, ev.row)
+        {
+            for (i, (lo, hi)) in tab_regions.iter().enumerate() {
+                if ev.column >= *lo && ev.column <= *hi {
+                    return MouseAction::SwitchTab(i);
+                }
+            }
+            return MouseAction::None;
         }
 
         if !in_rect(content_area, ev.column, ev.row) {
@@ -115,7 +131,7 @@ impl MouseState {
     }
 }
 
-fn in_rect(r: Rect, col: u16, row: u16) -> bool {
+pub fn in_rect(r: Rect, col: u16, row: u16) -> bool {
     col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
 }
 
