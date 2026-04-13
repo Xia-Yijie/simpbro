@@ -366,6 +366,47 @@ impl JsEngine {
         self.logs.borrow().clone()
     }
 
+    /// Dispatch a DOM event on the given node. Returns false if preventDefault was called.
+    pub fn dispatch_event(&self, node_id: crate::dom::NodeId, event_type: &str) -> bool {
+        let code = format!(
+            "(globalThis.__dispatch_event ? globalThis.__dispatch_event({}, {:?}) : true)",
+            node_id, event_type
+        );
+        let result = self.context.with(|ctx| {
+            ctx.eval::<bool, _>(code.as_str()).unwrap_or(true)
+        });
+        self.run_immediate_timers();
+        result
+    }
+
+    /// Return the set of node IDs that have at least one listener for `event_type`.
+    pub fn nodes_with_listener(&self, event_type: &str) -> std::collections::HashSet<crate::dom::NodeId> {
+        let code = format!(r#"
+            (function() {{
+                const result = [];
+                const suffix = ':{}';
+                const map = globalThis.__nodeListeners || {{}};
+                for (const key in map) {{
+                    if (key.endsWith(suffix) && map[key].length > 0) {{
+                        const id = parseInt(key.split(':')[0], 10);
+                        if (!isNaN(id)) result.push(id);
+                    }}
+                }}
+                return result;
+            }})()
+        "#, event_type);
+        self.context.with(|ctx| {
+            ctx.eval::<Vec<i32>, _>(code.as_str())
+                .map(|v| v.into_iter().map(|i| i as usize).collect())
+                .unwrap_or_default()
+        })
+    }
+
+    /// Set an attribute on a DOM node (e.g. input value).
+    pub fn set_attribute(&self, node_id: crate::dom::NodeId, name: &str, value: &str) {
+        self.dom.borrow_mut().nodes[node_id].attributes.insert(name.to_string(), value.to_string());
+    }
+
     /// Check if JS changed window.location.href (e.g. via location.replace)
     pub fn redirected_url(&self) -> Option<String> {
         self.context.with(|ctx| -> Option<String> {

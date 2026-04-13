@@ -1,5 +1,32 @@
 // simpbro JS polyfill - bridges native __dom_* functions to standard Web APIs
 
+// Event listener registry — keyed by "nodeId:eventType" so listeners survive
+// across Element wrapper objects (which are created fresh on each DOM query).
+globalThis.__nodeListeners = {};
+
+// Called from Rust to fire an event on a DOM node.
+// Returns true if default behavior should proceed (preventDefault not called).
+globalThis.__dispatch_event = function(nodeId, eventType) {
+    const key = nodeId + ':' + eventType;
+    const handlers = globalThis.__nodeListeners[key] || [];
+    const target = new Element(nodeId);
+    const event = {
+        type: eventType,
+        target,
+        currentTarget: target,
+        defaultPrevented: false,
+        bubbles: false,
+        cancelable: true,
+        preventDefault() { this.defaultPrevented = true; },
+        stopPropagation() {},
+        stopImmediatePropagation() {},
+    };
+    for (const h of handlers) {
+        try { h.call(target, event); } catch(e) { console.error(e); }
+    }
+    return !event.defaultPrevented;
+};
+
 class Element {
     constructor(nodeId) {
         this.__id = nodeId;
@@ -115,19 +142,27 @@ class Element {
         });
     }
 
-    // Events (stored JS-side)
-    addEventListener(event, handler, opts) {
-        if (!this.__listeners) this.__listeners = {};
-        if (!this.__listeners[event]) this.__listeners[event] = [];
-        this.__listeners[event].push(handler);
+    // Events — listeners stored in global __nodeListeners keyed by (nodeId, type)
+    // so they survive across transient Element wrapper objects.
+    addEventListener(event, handler, _opts) {
+        const key = this.__id + ':' + event;
+        if (!globalThis.__nodeListeners[key]) globalThis.__nodeListeners[key] = [];
+        globalThis.__nodeListeners[key].push(handler);
     }
     removeEventListener(event, handler) {
-        if (this.__listeners && this.__listeners[event])
-            this.__listeners[event] = this.__listeners[event].filter(h => h !== handler);
+        const key = this.__id + ':' + event;
+        const list = globalThis.__nodeListeners[key];
+        if (!list) return;
+        const filtered = list.filter(h => h !== handler);
+        if (filtered.length === 0) delete globalThis.__nodeListeners[key];
+        else globalThis.__nodeListeners[key] = filtered;
     }
     dispatchEvent(event) {
-        if (this.__listeners && this.__listeners[event.type])
-            this.__listeners[event.type].forEach(h => { try { h(event); } catch(e) { console.error(e); } });
+        const key = this.__id + ':' + event.type;
+        const handlers = globalThis.__nodeListeners[key] || [];
+        const self = this;
+        handlers.forEach(h => { try { h.call(self, event); } catch(e) { console.error(e); } });
+        return !event.defaultPrevented;
     }
 
     // Form

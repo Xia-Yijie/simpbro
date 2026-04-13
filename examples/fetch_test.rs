@@ -13,14 +13,25 @@ fn main() {
             println!("\n--- Content ---");
             for line in &page.lines {
                 match line {
-                    simpbro::browser::PageLine::Heading(t, level) => {
+                    simpbro::browser::PageLine::Heading(t, level, _) => {
                         println!("[H{}] {}", level, t);
                     }
-                    simpbro::browser::PageLine::Text(t) => {
+                    simpbro::browser::PageLine::Text(t, _) => {
                         println!("     {}", t);
                     }
-                    simpbro::browser::PageLine::LinkRef(t, idx) => {
+                    simpbro::browser::PageLine::LinkRef(t, idx, _) => {
                         println!("[Link#{}] {} -> {}", idx, t, page.links[*idx].url);
+                    }
+                    simpbro::browser::PageLine::ButtonRef(label, _, _) => {
+                        println!("[Button] [{}]", label);
+                    }
+                    simpbro::browser::PageLine::InputRef(placeholder, idx, _) => {
+                        let val = &page.inputs[*idx].value;
+                        if val.is_empty() {
+                            println!("[Input#{}] [{}]", idx, placeholder);
+                        } else {
+                            println!("[Input#{}] [{}] = \"{}\"", idx, placeholder, val);
+                        }
                     }
                     simpbro::browser::PageLine::Blank => {
                         println!();
