@@ -10,10 +10,7 @@ pub enum Display {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CssColor {
-    Named(u8, u8, u8),
-    Rgb(u8, u8, u8),
-}
+pub struct CssColor(pub u8, pub u8, pub u8);
 
 #[derive(Debug, Clone, Default)]
 pub struct ComputedStyle {
@@ -254,7 +251,7 @@ fn compute_specificity(selector: &str) -> u32 {
         if part.is_empty() { continue; }
         spec += part.matches('#').count() as u32 * 100;
         spec += part.matches('.').count() as u32 * 10;
-        if part.chars().next().map_or(false, |c| c.is_ascii_alphabetic()) {
+        if part.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
             spec += 1;
         }
     }
@@ -390,28 +387,45 @@ fn apply_tag_defaults(tag: &str, style: &mut ComputedStyle) {
         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => style.bold = true,
         _ => {}
     }
+    if style.display.is_none() {
+        style.display = Some(default_display(tag));
+    }
+}
+
+/// Default CSS display value per HTML user-agent stylesheet.
+fn default_display(tag: &str) -> Display {
+    match tag {
+        "address" | "article" | "aside" | "blockquote" | "body" | "caption" | "col"
+        | "colgroup" | "dd" | "details" | "dialog" | "div" | "dl" | "dt" | "fieldset"
+        | "figcaption" | "figure" | "footer" | "form" | "h1" | "h2" | "h3" | "h4" | "h5"
+        | "h6" | "header" | "hgroup" | "hr" | "html" | "li" | "main" | "menu" | "nav" | "ol"
+        | "p" | "pre" | "section" | "table" | "tbody" | "tfoot" | "thead" | "tr" | "ul" => {
+            Display::Block
+        }
+        _ => Display::Inline,
+    }
 }
 
 fn parse_color(s: &str) -> Option<CssColor> {
     let s = s.trim().to_lowercase();
     match s.as_str() {
-        "black" => return Some(CssColor::Named(0, 0, 0)),
-        "white" => return Some(CssColor::Named(255, 255, 255)),
-        "red" => return Some(CssColor::Named(255, 0, 0)),
-        "green" => return Some(CssColor::Named(0, 128, 0)),
-        "blue" => return Some(CssColor::Named(0, 0, 255)),
-        "yellow" => return Some(CssColor::Named(255, 255, 0)),
-        "cyan" | "aqua" => return Some(CssColor::Named(0, 255, 255)),
-        "magenta" | "fuchsia" => return Some(CssColor::Named(255, 0, 255)),
-        "gray" | "grey" => return Some(CssColor::Named(128, 128, 128)),
-        "silver" => return Some(CssColor::Named(192, 192, 192)),
-        "maroon" => return Some(CssColor::Named(128, 0, 0)),
-        "olive" => return Some(CssColor::Named(128, 128, 0)),
-        "lime" => return Some(CssColor::Named(0, 255, 0)),
-        "teal" => return Some(CssColor::Named(0, 128, 128)),
-        "navy" => return Some(CssColor::Named(0, 0, 128)),
-        "purple" => return Some(CssColor::Named(128, 0, 128)),
-        "orange" => return Some(CssColor::Named(255, 165, 0)),
+        "black" => return Some(CssColor(0, 0, 0)),
+        "white" => return Some(CssColor(255, 255, 255)),
+        "red" => return Some(CssColor(255, 0, 0)),
+        "green" => return Some(CssColor(0, 128, 0)),
+        "blue" => return Some(CssColor(0, 0, 255)),
+        "yellow" => return Some(CssColor(255, 255, 0)),
+        "cyan" | "aqua" => return Some(CssColor(0, 255, 255)),
+        "magenta" | "fuchsia" => return Some(CssColor(255, 0, 255)),
+        "gray" | "grey" => return Some(CssColor(128, 128, 128)),
+        "silver" => return Some(CssColor(192, 192, 192)),
+        "maroon" => return Some(CssColor(128, 0, 0)),
+        "olive" => return Some(CssColor(128, 128, 0)),
+        "lime" => return Some(CssColor(0, 255, 0)),
+        "teal" => return Some(CssColor(0, 128, 128)),
+        "navy" => return Some(CssColor(0, 0, 128)),
+        "purple" => return Some(CssColor(128, 0, 128)),
+        "orange" => return Some(CssColor(255, 165, 0)),
         "transparent" | "inherit" | "currentcolor" => return None,
         _ => {}
     }
@@ -421,13 +435,13 @@ fn parse_color(s: &str) -> Option<CssColor> {
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
             let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
             let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            return Some(CssColor::Rgb(r, g, b));
+            return Some(CssColor(r, g, b));
         }
         if hex.len() == 3 {
             let r = u8::from_str_radix(&hex[0..1], 16).ok()? * 17;
             let g = u8::from_str_radix(&hex[1..2], 16).ok()? * 17;
             let b = u8::from_str_radix(&hex[2..3], 16).ok()? * 17;
-            return Some(CssColor::Rgb(r, g, b));
+            return Some(CssColor(r, g, b));
         }
     }
 
@@ -437,7 +451,7 @@ fn parse_color(s: &str) -> Option<CssColor> {
             let r: u8 = parts[0].trim().parse().ok()?;
             let g: u8 = parts[1].trim().parse().ok()?;
             let b: u8 = parts[2].trim().parse().ok()?;
-            return Some(CssColor::Rgb(r, g, b));
+            return Some(CssColor(r, g, b));
         }
     }
     if let Some(inner) = s.strip_prefix("rgba(").and_then(|x| x.strip_suffix(')')) {
@@ -446,7 +460,7 @@ fn parse_color(s: &str) -> Option<CssColor> {
             let r: u8 = parts[0].trim().parse().ok()?;
             let g: u8 = parts[1].trim().parse().ok()?;
             let b: u8 = parts[2].trim().parse().ok()?;
-            return Some(CssColor::Rgb(r, g, b));
+            return Some(CssColor(r, g, b));
         }
     }
 

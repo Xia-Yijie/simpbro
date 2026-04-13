@@ -16,11 +16,15 @@ fn main() {
                     simpbro::browser::PageLine::Heading(t, level, _) => {
                         println!("[H{}] {}", level, t);
                     }
-                    simpbro::browser::PageLine::Text(t, _) => {
-                        println!("     {}", t);
-                    }
-                    simpbro::browser::PageLine::LinkRef(t, idx, _) => {
-                        println!("[Link#{}] {} -> {}", idx, t, page.links[*idx].url);
+                    simpbro::browser::PageLine::Text(segs) => {
+                        let s: String = segs.iter().map(|seg| {
+                            if let Some(i) = seg.link_idx {
+                                format!("[{}#{}]", seg.text, i)
+                            } else {
+                                seg.text.clone()
+                            }
+                        }).collect();
+                        println!("     {}", s);
                     }
                     simpbro::browser::PageLine::ButtonRef(label, _, _) => {
                         println!("[Button] [{}]", label);

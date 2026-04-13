@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>simpbro — 终端浏览器</title>
+<style>
+  h1 { color: #00d4ff; }
+  h2 { color: #ffd700; }
+  .key { color: #ffa500; font-weight: bold; }
+  .hint { color: #a0a0a0; font-style: italic; }
+  kbd { color: #ffa500; font-weight: bold; }
+  code { color: #88dd88; }
+  .tip { color: #88ccff; }
+</style>
+</head>
+<body>
+
+<h1>simpbro — 终端里的浏览器</h1>
+
+<p>一个用 Rust 写的 TUI 浏览器，支持 <b>HTML</b> 解析、<b>CSS</b> 排版、<b>JavaScript</b> 执行和 <b>表单交互</b>。</p>
+
+<h2>快捷键</h2>
+
+<ul>
+  <li><kbd>g</kbd> — 输入网址</li>
+  <li><kbd>Tab</kbd> / <kbd>Shift+Tab</kbd> — 切换焦点（链接 / 输入框 / 按钮）</li>
+  <li><kbd>Enter</kbd> — 激活焦点（跟随链接 / 编辑输入框 / 点击按钮）</li>
+  <li><kbd>j</kbd> <kbd>k</kbd> 或 <kbd>↑</kbd> <kbd>↓</kbd> — 滚动</li>
+  <li><kbd>d</kbd> <kbd>u</kbd> — 快速滚动（10 行）</li>
+  <li><kbd>b</kbd> — 后退</li>
+  <li><kbd>s</kbd> — 提交表单</li>
+  <li><kbd>q</kbd> — 退出</li>
+</ul>
+
+<h2>试一下</h2>
+
+<ul>
+  <li><a href="https://example.com">example.com</a> — 最简 HTML 页面</li>
+  <li><a href="https://news.ycombinator.com">Hacker News</a> — 经典链接列表</li>
+  <li><a href="https://baidu.com">百度</a> — 表单 + 搜索演示</li>
+  <li><a href="https://github.com">GitHub</a> — 复杂 JS 页面</li>
+</ul>
+
+<h2>关于</h2>
+
+<p class="hint">鼠标支持：滚轮滚动、单击聚焦、双击激活、拖拽选中后右键复制。</p>
+<p class="tip">源代码：<a href="https://github.com/Xia-Yijie/simpbro">github.com/Xia-Yijie/simpbro</a></p>
+
+</body>
+</html>

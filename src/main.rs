@@ -3,16 +3,22 @@ mod browser;
 mod css;
 mod dom;
 mod js_engine;
+mod mouse;
 mod ui;
+mod viewport;
 
 use anyhow::Result;
 use app::{App, InputMode};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, EnableMouseCapture, DisableMouseCapture},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::prelude::*;
+use mouse::MouseAction;
+use ratatui::{
+    layout::Rect,
+    prelude::*,
+};
 use std::io;
 
 fn main() -> Result<()> {
@@ -28,31 +34,53 @@ fn main() -> Result<()> {
         app.navigate(&url);
     }
 
+    // Cached info from the last draw, used to interpret mouse events.
+    let mut last_content: Rect = Rect::default();
+    let mut last_viewport: Option<viewport::Viewport> = None;
+
     loop {
-        terminal.draw(|f| ui::draw(f, &mut app))?;
+        terminal.draw(|f| {
+            let res = ui::draw(f, &mut app);
+            last_content = res.content_area;
+            last_viewport = Some(res.viewport);
+        })?;
 
         let ev = event::read()?;
 
-        if let Event::Mouse(mouse) = &ev {
-            match mouse.kind {
-                MouseEventKind::ScrollUp => { app.scroll_up(3); continue; }
-                MouseEventKind::ScrollDown => { app.scroll_down(3); continue; }
-                MouseEventKind::ScrollLeft => { app.focus_prev(); continue; }
-                MouseEventKind::ScrollRight => { app.focus_next(); continue; }
-                _ => continue, // ignore mouse move/click without redraw
+        if let Event::Mouse(mouse_ev) = &ev {
+            let vp = match &last_viewport {
+                Some(v) => v,
+                None => continue,
+            };
+            let page_ref = app.current_page.as_ref();
+            let action = app.mouse.handle(mouse_ev, last_content, vp, page_ref);
+            match action {
+                MouseAction::None => {}
+                MouseAction::ScrollUp(n) => app.scroll_up(n),
+                MouseAction::ScrollDown(n) => app.scroll_down(n),
+                MouseAction::FocusAt(idx) => app.set_focus(idx),
+                MouseAction::ActivateAt(idx) => {
+                    app.set_focus(idx);
+                    app.activate_focused();
+                }
+                MouseAction::Copy(text) => {
+                    if mouse::osc52_copy(&text).is_ok() {
+                        let preview: String = text.chars().take(30).collect();
+                        app.status_msg = format!("已复制: {}", preview);
+                    } else {
+                        app.status_msg = "复制失败".into();
+                    }
+                }
             }
+            continue;
         }
 
         if let Event::Key(key) = ev {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
+            if key.kind != KeyEventKind::Press { continue; }
 
             match app.input_mode {
                 InputMode::Normal => match key.code {
-                    KeyCode::Char('q') => {
-                        app.should_quit = true;
-                    }
+                    KeyCode::Char('q') => app.should_quit = true,
                     KeyCode::Char('g') => {
                         app.input_mode = InputMode::UrlInput;
                         app.input.clear();
@@ -73,9 +101,7 @@ fn main() -> Result<()> {
                     KeyCode::Enter => {
                         let url = app.input.clone();
                         app.input_mode = InputMode::Normal;
-                        if !url.is_empty() {
-                            app.navigate(&url);
-                        }
+                        if !url.is_empty() { app.navigate(&url); }
                     }
                     KeyCode::Esc => {
                         app.input_mode = InputMode::Normal;
@@ -97,9 +123,7 @@ fn main() -> Result<()> {
                 },
             }
 
-            if app.should_quit {
-                break;
-            }
+            if app.should_quit { break; }
         }
     }
 

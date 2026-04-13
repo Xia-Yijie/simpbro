@@ -1,4 +1,5 @@
-use crate::browser::{Browser, Page, PageLine};
+use crate::browser::{Browser, FocusKind, Page};
+use crate::mouse::MouseState;
 use anyhow::Result;
 
 pub enum InputMode {
@@ -11,26 +12,33 @@ pub struct App {
     pub browser: Browser,
     pub current_page: Option<Page>,
     pub scroll_offset: usize,
+    /// Index into page.focus_order.
     pub focused: Option<usize>,
     pub viewport_height: Option<usize>,
     pub input: String,
     pub input_mode: InputMode,
     pub status_msg: String,
     pub should_quit: bool,
+    pub mouse: MouseState,
 }
 
 impl App {
     pub fn new() -> Result<Self> {
+        let browser = Browser::new()?;
+        let welcome_html = include_str!("welcome.html");
+        let welcome = browser.load_embedded(welcome_html, "about:simpbro").ok();
+        let focused = welcome.as_ref().and_then(|p| if p.focus_order.is_empty() { None } else { Some(0) });
         Ok(Self {
-            browser: Browser::new()?,
-            current_page: None,
+            browser,
+            current_page: welcome,
             scroll_offset: 0,
-            focused: None,
+            focused,
             viewport_height: None,
             input: String::new(),
             input_mode: InputMode::Normal,
             status_msg: "按 g 输入网址 | q 退出".into(),
             should_quit: false,
+            mouse: MouseState::default(),
         })
     }
 
@@ -45,7 +53,7 @@ impl App {
             Ok(page) => {
                 self.status_msg = format!("已加载: {}", page.title);
                 self.scroll_offset = 0;
-                self.focused = self.first_focusable(&page);
+                self.focused = if page.focus_order.is_empty() { None } else { Some(0) };
                 self.current_page = Some(page);
             }
             Err(e) => {
@@ -54,86 +62,68 @@ impl App {
         }
     }
 
-    fn is_focusable(line: &PageLine) -> bool {
-        matches!(line, PageLine::LinkRef(..) | PageLine::InputRef(..) | PageLine::ButtonRef(..))
+    fn focus_count(&self) -> usize {
+        self.current_page.as_ref().map(|p| p.focus_order.len()).unwrap_or(0)
     }
 
-    fn focusable_indices(&self) -> Vec<usize> {
-        match &self.current_page {
-            Some(page) => page.lines.iter().enumerate()
-                .filter(|(_, l)| Self::is_focusable(l))
-                .map(|(i, _)| i)
-                .collect(),
-            None => Vec::new(),
+    pub fn set_focus(&mut self, idx: usize) {
+        let n = self.focus_count();
+        if idx < n {
+            self.focused = Some(idx);
+            self.scroll_to_focused();
         }
     }
 
-    fn first_focusable(&self, page: &Page) -> Option<usize> {
-        page.lines.iter().position(|l| Self::is_focusable(l))
-    }
-
     pub fn focus_next(&mut self) {
-        let indices = self.focusable_indices();
-        if indices.is_empty() { return; }
+        let n = self.focus_count();
+        if n == 0 { return; }
         self.focused = Some(match self.focused {
-            Some(cur) => {
-                indices.iter().find(|&&i| i > cur).copied()
-                    .unwrap_or(indices[0])
-            }
-            None => indices[0],
+            Some(i) => (i + 1) % n,
+            None => 0,
         });
         self.scroll_to_focused();
     }
 
     pub fn focus_prev(&mut self) {
-        let indices = self.focusable_indices();
-        if indices.is_empty() { return; }
+        let n = self.focus_count();
+        if n == 0 { return; }
         self.focused = Some(match self.focused {
-            Some(cur) => {
-                indices.iter().rev().find(|&&i| i < cur).copied()
-                    .unwrap_or(*indices.last().unwrap())
-            }
-            None => *indices.last().unwrap(),
+            Some(0) | None => n - 1,
+            Some(i) => i - 1,
         });
         self.scroll_to_focused();
     }
 
+    fn focused_line(&self) -> Option<usize> {
+        let f = self.focused?;
+        self.current_page.as_ref()?.focus_order.get(f).map(|fi| fi.line)
+    }
+
     fn scroll_to_focused(&mut self) {
-        if let Some(f) = self.focused {
-            if f < self.scroll_offset {
-                self.scroll_offset = f;
+        if let Some(line) = self.focused_line() {
+            if line < self.scroll_offset {
+                self.scroll_offset = line;
             }
-            // Can't know exact viewport height here, use a reasonable default
-            // The actual viewport height is set during rendering; use 20 as fallback
             let viewport = self.viewport_height.unwrap_or(20);
-            if f >= self.scroll_offset + viewport {
-                self.scroll_offset = f - viewport + 1;
+            if line >= self.scroll_offset + viewport {
+                self.scroll_offset = line - viewport + 1;
             }
         }
     }
 
     pub fn activate_focused(&mut self) {
-        let focused = match self.focused {
-            Some(f) => f,
+        let kind = match self.focused.and_then(|f| self.current_page.as_ref()?.focus_order.get(f).map(|fi| fi.kind)) {
+            Some(k) => k,
             None => return,
         };
-        // Extract what we need then dispatch
-        let action = {
-            let page = match &self.current_page {
-                Some(p) => p,
-                None => return,
-            };
-            page.lines.get(focused).cloned()
-        };
-        match action {
-            Some(PageLine::LinkRef(_, idx, _)) => {
-                let url_opt = self.current_page.as_mut()
-                    .and_then(|p| p.click_link(idx));
+        match kind {
+            FocusKind::Link(idx) => {
+                let url_opt = self.current_page.as_mut().and_then(|p| p.click_link(idx));
                 if let Some(url) = url_opt {
                     self.navigate(&url);
                 }
             }
-            Some(PageLine::InputRef(_, idx, _)) => {
+            FocusKind::Input(idx) => {
                 if let Some(page) = &self.current_page {
                     if let Some(inp) = page.inputs.get(idx) {
                         self.input = inp.value.clone();
@@ -143,14 +133,12 @@ impl App {
                     }
                 }
             }
-            Some(PageLine::ButtonRef(_, idx, _)) => {
-                let url_opt = self.current_page.as_mut()
-                    .and_then(|p| p.click_button(idx));
+            FocusKind::Button(idx) => {
+                let url_opt = self.current_page.as_mut().and_then(|p| p.click_button(idx));
                 if let Some(url) = url_opt {
                     self.navigate(&url);
                 }
             }
-            _ => {}
         }
     }
 
@@ -166,16 +154,11 @@ impl App {
     }
 
     pub fn submit_form(&mut self) {
-        let input_idx = match self.focused {
-            Some(f) => match self.current_page.as_ref().and_then(|p| p.lines.get(f)) {
-                Some(PageLine::InputRef(_, idx, _)) => Some(*idx),
-                _ => None,
-            },
-            None => None,
-        };
+        let input_idx = self.focused
+            .and_then(|f| self.current_page.as_ref()?.focus_order.get(f))
+            .and_then(|fi| match fi.kind { FocusKind::Input(i) => Some(i), _ => None });
         if let Some(idx) = input_idx {
-            let url_opt = self.current_page.as_mut()
-                .and_then(|p| p.submit_form(idx));
+            let url_opt = self.current_page.as_mut().and_then(|p| p.submit_form(idx));
             if let Some(url) = url_opt {
                 self.navigate(&url);
                 return;
@@ -204,15 +187,4 @@ impl App {
         }
     }
 
-    pub fn visible_lines(&self, height: usize) -> Vec<&PageLine> {
-        match &self.current_page {
-            Some(page) => page
-                .lines
-                .iter()
-                .skip(self.scroll_offset)
-                .take(height)
-                .collect(),
-            None => Vec::new(),
-        }
-    }
 }

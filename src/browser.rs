@@ -4,11 +4,11 @@ use url::Url;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::css::{self, ComputedStyle, CssColor, Rule};
+use crate::css::{self, ComputedStyle, CssColor, Display, Rule};
 use crate::dom::{Dom, DomNode, NodeId, NodeType};
 use crate::js_engine::JsEngine;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct TextStyle {
     pub color: Option<(u8, u8, u8)>,
     pub bold: bool,
@@ -20,9 +20,7 @@ pub struct TextStyle {
 impl TextStyle {
     fn from_computed(cs: &ComputedStyle) -> Self {
         Self {
-            color: cs.color.map(|c| match c {
-                CssColor::Named(r, g, b) | CssColor::Rgb(r, g, b) => (r, g, b),
-            }),
+            color: cs.color.map(|CssColor(r, g, b)| (r, g, b)),
             bold: cs.bold,
             italic: cs.italic,
             underline: cs.underline,
@@ -74,13 +72,32 @@ pub enum ButtonKind {
 }
 
 #[derive(Clone, Debug)]
+pub struct TextSegment {
+    pub text: String,
+    pub style: TextStyle,
+    pub link_idx: Option<usize>,
+}
+
+#[derive(Clone, Debug)]
 pub enum PageLine {
     Heading(String, u8, TextStyle),
-    Text(String, TextStyle),
-    LinkRef(String, usize, TextStyle),
+    Text(Vec<TextSegment>),
     InputRef(String, usize, TextStyle),
     ButtonRef(String, usize, TextStyle),
     Blank,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusKind {
+    Link(usize),
+    Input(usize),
+    Button(usize),
+}
+
+#[derive(Clone, Debug)]
+pub struct FocusItem {
+    pub kind: FocusKind,
+    pub line: usize,
 }
 
 const SKIP_TAGS: &[&str] = &[
@@ -97,10 +114,10 @@ pub struct Page {
     pub inputs: Vec<FormInput>,
     pub forms: Vec<FormInfo>,
     pub buttons: Vec<Button>,
+    pub focus_order: Vec<FocusItem>,
     #[allow(dead_code)]
     pub js_logs: Vec<String>,
     engine: JsEngine,
-    // Stylesheet rules parsed once at page build time.
     stylesheet: Vec<Rule>,
 }
 
@@ -133,6 +150,7 @@ impl Page {
                 has_interactive: &has_interactive,
             };
             walk_dom_node(&input, body_id, &mut ctx, None);
+            ctx.flush_inline();
         }
 
         ctx.lines.dedup_by(|a, b| matches!(a, PageLine::Blank) && matches!(b, PageLine::Blank));
@@ -147,6 +165,7 @@ impl Page {
         self.inputs = ctx.inputs;
         self.forms = ctx.forms;
         self.buttons = ctx.buttons;
+        self.focus_order = ctx.focus_order;
         self.js_logs = self.engine.logs();
     }
 
@@ -214,6 +233,57 @@ struct WalkCtx {
     inputs: Vec<FormInput>,
     forms: Vec<FormInfo>,
     buttons: Vec<Button>,
+    focus_order: Vec<FocusItem>,
+    inline_buf: Vec<TextSegment>,
+    // Link indices seen in the current inline_buf — flushed into focus_order when the line closes.
+    pending_link_focus: Vec<usize>,
+}
+
+impl WalkCtx {
+    fn ensure_space(&mut self) {
+        if let Some(last) = self.inline_buf.last() {
+            if !last.text.ends_with(|c: char| c.is_whitespace()) {
+                self.inline_buf.push(TextSegment {
+                    text: " ".into(),
+                    style: TextStyle::default(),
+                    link_idx: None,
+                });
+            }
+        }
+    }
+
+    fn push_inline(&mut self, text: &str, style: TextStyle) {
+        if text.is_empty() { return; }
+        if !text.starts_with(|c: char| c.is_whitespace()) {
+            self.ensure_space();
+        }
+        self.inline_buf.push(TextSegment { text: text.to_string(), style, link_idx: None });
+    }
+
+    fn push_link_segment(&mut self, text: &str, style: TextStyle, link_idx: usize) {
+        if text.is_empty() { return; }
+        self.ensure_space();
+        self.inline_buf.push(TextSegment { text: text.to_string(), style, link_idx: Some(link_idx) });
+        if !self.pending_link_focus.contains(&link_idx) {
+            self.pending_link_focus.push(link_idx);
+        }
+    }
+
+    fn flush_inline(&mut self) {
+        if self.inline_buf.is_empty() {
+            self.pending_link_focus.clear();
+            return;
+        }
+        let line_idx = self.lines.len();
+        let segs = std::mem::take(&mut self.inline_buf);
+        self.lines.push(PageLine::Text(segs));
+        for link_idx in self.pending_link_focus.drain(..) {
+            self.focus_order.push(FocusItem {
+                kind: FocusKind::Link(link_idx),
+                line: line_idx,
+            });
+        }
+    }
 }
 
 fn is_js_clickable(node: &DomNode, click_nodes: &HashSet<NodeId>) -> bool {
@@ -273,11 +343,10 @@ fn walk_dom_node(
         NodeType::Text => {
             let t = node.text.trim();
             if !t.is_empty() {
-                // Inherit style from parent element
                 let parent_style = node.parent.and_then(|p| styles.get(&p))
                     .map(TextStyle::from_computed)
                     .unwrap_or_default();
-                ctx.lines.push(PageLine::Text(t.to_string(), parent_style));
+                ctx.push_inline(t, parent_style);
             }
         }
         NodeType::Element => {
@@ -304,7 +373,10 @@ fn walk_dom_node(
                 let idx = ctx.inputs.len();
                 let display = if placeholder.is_empty() { format!("文本框:{}", name) } else { placeholder.clone() };
                 ctx.inputs.push(FormInput { node_id, input_type: "textarea".into(), name, value, placeholder, form_id: current_form });
+                ctx.flush_inline();
+                let line_idx = ctx.lines.len();
                 ctx.lines.push(PageLine::InputRef(display, idx, ts));
+                ctx.focus_order.push(FocusItem { kind: FocusKind::Input(idx), line: line_idx });
                 return;
             }
 
@@ -333,16 +405,20 @@ fn walk_dom_node(
                         kind: ButtonKind::Plain,
                         form_id: current_form,
                     });
+                    ctx.flush_inline();
+                    let line_idx = ctx.lines.len();
                     ctx.lines.push(PageLine::ButtonRef(label, idx, ts));
+                    ctx.focus_order.push(FocusItem { kind: FocusKind::Button(idx), line: line_idx });
                     return;
                 }
             }
 
             match tag {
                 "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                    let level = tag[1..].parse::<u8>().unwrap_or(1);
+                    let level = tag.as_bytes()[1] - b'0';
                     let text = dom.get_text_content(node_id).trim().to_string();
                     if !text.is_empty() {
+                        ctx.flush_inline();
                         ctx.lines.push(PageLine::Blank);
                         ctx.lines.push(PageLine::Heading(text, level, ts));
                         ctx.lines.push(PageLine::Blank);
@@ -355,7 +431,7 @@ fn walk_dom_node(
                         let resolved = base.join(href).map(|u| u.to_string()).unwrap_or(href.to_string());
                         let idx = ctx.links.len();
                         ctx.links.push(Link { node_id, text: text.clone(), url: resolved });
-                        ctx.lines.push(PageLine::LinkRef(text, idx, ts));
+                        ctx.push_link_segment(&text, ts, idx);
                     }
                 }
                 "form" => {
@@ -377,12 +453,15 @@ fn walk_dom_node(
                     if matches!(input_type, "hidden" | "image" | "reset" | "checkbox" | "radio" | "file") {
                         return;
                     }
+                    ctx.flush_inline();
                     if input_type == "submit" || input_type == "button" {
                         let label = node.attributes.get("value").map(|s| s.as_str()).unwrap_or("提交").to_string();
                         let idx = ctx.buttons.len();
                         let kind = if input_type == "submit" { ButtonKind::Submit } else { ButtonKind::Plain };
                         ctx.buttons.push(Button { node_id, label: label.clone(), kind, form_id: current_form });
+                        let line_idx = ctx.lines.len();
                         ctx.lines.push(PageLine::ButtonRef(label, idx, ts));
+                        ctx.focus_order.push(FocusItem { kind: FocusKind::Button(idx), line: line_idx });
                         return;
                     }
                     let name = node.attributes.get("name").cloned().unwrap_or_default();
@@ -391,7 +470,9 @@ fn walk_dom_node(
                     let idx = ctx.inputs.len();
                     let display = if placeholder.is_empty() { format!("输入框:{}", name) } else { placeholder.clone() };
                     ctx.inputs.push(FormInput { node_id, input_type: input_type.to_string(), name, value, placeholder, form_id: current_form });
+                    let line_idx = ctx.lines.len();
                     ctx.lines.push(PageLine::InputRef(display, idx, ts));
+                    ctx.focus_order.push(FocusItem { kind: FocusKind::Input(idx), line: line_idx });
                 }
                 "button" => {
                     let label = dom.get_text_content(node_id).trim().to_string();
@@ -400,31 +481,42 @@ fn walk_dom_node(
                     let kind = if btype == "submit" { ButtonKind::Submit } else { ButtonKind::Plain };
                     let idx = ctx.buttons.len();
                     ctx.buttons.push(Button { node_id, label: label.clone(), kind, form_id: current_form });
+                    ctx.flush_inline();
+                    let line_idx = ctx.lines.len();
                     ctx.lines.push(PageLine::ButtonRef(label, idx, ts));
+                    ctx.focus_order.push(FocusItem { kind: FocusKind::Button(idx), line: line_idx });
                 }
                 "img" => {
                     let alt = node.attributes.get("alt").map(|s| s.as_str()).unwrap_or("图片");
-                    ctx.lines.push(PageLine::Text(format!("[图: {}]", alt), ts));
+                    ctx.push_inline(&format!("[图: {}]", alt), ts);
                 }
                 "br" => {
-                    ctx.lines.push(PageLine::Blank);
-                }
-                "p" | "div" | "section" | "article" | "main" | "header" | "footer" | "nav" => {
-                    ctx.lines.push(PageLine::Blank);
-                    for &child in &node.children {
-                        walk_dom_node(w, child, ctx, current_form);
-                    }
+                    ctx.flush_inline();
                     ctx.lines.push(PageLine::Blank);
                 }
                 "li" => {
-                    let text = dom.get_text_content(node_id).trim().to_string();
-                    if !text.is_empty() {
-                        ctx.lines.push(PageLine::Text(format!("  • {}", text), ts));
-                    }
-                }
-                _ => {
+                    ctx.flush_inline();
+                    ctx.push_inline("  • ", TextStyle::default());
                     for &child in &node.children {
                         walk_dom_node(w, child, ctx, current_form);
+                    }
+                    ctx.flush_inline();
+                }
+                _ => {
+                    let is_block = matches!(
+                        styles.get(&node_id).and_then(|s| s.display),
+                        Some(Display::Block),
+                    );
+                    if is_block {
+                        ctx.flush_inline();
+                        ctx.lines.push(PageLine::Blank);
+                    }
+                    for &child in &node.children {
+                        walk_dom_node(w, child, ctx, current_form);
+                    }
+                    if is_block {
+                        ctx.flush_inline();
+                        ctx.lines.push(PageLine::Blank);
                     }
                 }
             }
@@ -457,6 +549,12 @@ impl Browser {
         }
         self.history.push(page.url.clone());
         Ok(page)
+    }
+
+    /// Build a Page from an HTML string without making a network request.
+    /// Used for the embedded welcome page.
+    pub fn load_embedded(&self, html: &str, url: &str) -> Result<Page> {
+        self.build_page(html, url)
     }
 
     pub fn go_back(&mut self) -> Option<Result<Page>> {
@@ -505,6 +603,7 @@ impl Browser {
             inputs: Vec::new(),
             forms: Vec::new(),
             buttons: Vec::new(),
+            focus_order: Vec::new(),
             js_logs: Vec::new(),
             engine,
             stylesheet,
